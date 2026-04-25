@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Loader2, Lock, Cloud, Zap, Shield, Globe } from "lucide-react";
+import { Loader2, Lock, Cloud, Zap, Shield, Globe, ArrowLeft } from "lucide-react";
 
 export default function Home() {
   const [, navigate] = useLocation();
@@ -30,7 +30,10 @@ export default function Home() {
           <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
             TN Vault
           </h1>
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
+            <Button onClick={() => window.history.back()} variant="ghost" className="text-slate-300 hover:bg-slate-800 p-2" title="Zurück">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
             <Button onClick={() => navigate("/pricing")} variant="ghost" className="text-slate-300 hover:bg-slate-800 hidden sm:inline-flex">
               Preise
             </Button>
