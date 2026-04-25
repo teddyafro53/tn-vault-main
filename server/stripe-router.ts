@@ -50,7 +50,13 @@ export const stripeRouter = router({
         return { sessionId: session.id, url: session.url };
       } catch (error: any) {
         console.error("Checkout Session Error:", error);
-        throw new Error(error.message || "Failed to create checkout session");
+        // Wir geben den Fehler als Objekt zurück, damit das Frontend ihn sauber anzeigen kann
+        // anstatt dass der Server mit einem 500er Fehler abstürzt.
+        return { 
+          error: true, 
+          message: error.message || "Unbekannter Stripe Fehler",
+          details: error.type || "Keine Details verfügbar"
+        };
       }
     }),
 

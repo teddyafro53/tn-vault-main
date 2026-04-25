@@ -13,13 +13,19 @@ export default function Pricing() {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
 
   const createCheckoutSession = trpc.stripe.createCheckoutSession.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
+      if (data.error) {
+        toast.error(`Konfigurationsfehler: ${data.message}`);
+        console.error("Stripe Config Error:", data.details);
+        setLoadingPlan(null);
+        return;
+      }
       if (data.url) {
         window.location.href = data.url;
       }
     },
     onError: (error) => {
-      toast.error("Checkout-Fehler: " + error.message);
+      toast.error("Server-Fehler: " + error.message);
       setLoadingPlan(null);
     }
   });
