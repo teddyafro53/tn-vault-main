@@ -1,22 +1,36 @@
-import { router, publicProcedure, protectedProcedure } from "./_core/trpc";
+import { router, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import Stripe from "stripe";
 import { createClient } from "@supabase/supabase-js";
+
+// Hilfsfunktion zur sicheren Initialisierung von Stripe
+const getStripe = () => {
+  const key = (process.env.STRIPE_SECRET_KEY || "").trim();
+  if (!key) {
+    throw new Error("STRIPE_SECRET_KEY ist nicht konfiguriert.");
+  }
+  return new Stripe(key, {
+    apiVersion: "2023-10-16" as any,
+  });
+};
+
+// Hilfsfunktion zur sicheren Initialisierung von Supabase
+const getSupabaseAdmin = () => {
+  const url = (process.env.VITE_SUPABASE_URL || "").trim();
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  if (!url || !key) {
+    throw new Error("Supabase Konfiguration fehlt.");
+  }
+  return createClient(url, key);
+};
 
 export const stripeRouter = router({
   createCheckoutSession: protectedProcedure
     .input(z.object({ plan: z.enum(["monthly", "yearly"]) }))
     .mutation(async ({ ctx, input }) => {
       try {
-        const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
-        if (!stripeSecretKey) {
-          throw new Error("STRIPE_SECRET_KEY is not configured in environment variables");
-        }
-
-        const stripe = new Stripe(stripeSecretKey, {
-          apiVersion: "2023-10-16" as any,
-        });
-
+        const stripe = getStripe();
+        
         const rawPriceId = input.plan === "monthly" 
           ? process.env.STRIPE_PRICE_ID_MONTHLY 
           : process.env.STRIPE_PRICE_ID_YEARLY;
@@ -24,8 +38,7 @@ export const stripeRouter = router({
         const priceId = (rawPriceId || "").trim();
 
         if (!priceId) {
-          console.error("Stripe Error: Price ID not configured for plan:", input.plan);
-          throw new Error(`Stripe Price ID for ${input.plan} not configured. Please check Vercel environment variables.`);
+          throw new Error(`Stripe Price ID für ${input.plan} ist nicht konfiguriert.`);
         }
 
         const appUrl = (process.env.APP_URL || "https://tn-vault-main.vercel.app").trim();
@@ -49,81 +62,71 @@ export const stripeRouter = router({
 
         return { sessionId: session.id, url: session.url };
       } catch (error: any) {
-        console.error("Checkout Session Error:", error);
-        // Wir geben den Fehler als Objekt zurück, damit das Frontend ihn sauber anzeigen kann
-        // anstatt dass der Server mit einem 500er Fehler abstürzt.
+        console.error("Stripe Checkout Error:", error);
+        // Wir werfen den Fehler NICHT, sondern geben ihn als Objekt zurück,
+        // um den "Unexpected token A" (HTML Error Page) zu vermeiden.
         return { 
           error: true, 
-          message: error.message || "Unbekannter Stripe Fehler",
-          details: error.type || "Keine Details verfügbar"
+          message: error.message || "Ein interner Fehler ist aufgetreten.",
+          details: error.stack || ""
         };
       }
     }),
 
   getSubscriptionStatus: protectedProcedure.query(async ({ ctx }) => {
-    const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").trim();
-    const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { data: profile, error } = await supabaseAdmin
+        .from("profiles")
+        .select("subscription_status")
+        .eq("id", ctx.user.id)
+        .single();
 
-    const { data: profile, error } = await supabaseAdmin
-      .from("profiles")
-      .select("subscription_status")
-      .eq("id", ctx.user.id)
-      .single();
+      if (error || !profile) {
+        return { status: "none" };
+      }
 
-    if (error || !profile) {
-      return { status: "none" };
+      return { status: profile.subscription_status };
+    } catch (e) {
+      console.error("Supabase Status Error:", e);
+      return { status: "error" };
     }
-
-    return { status: profile.subscription_status };
   }),
 });
 
-// Webhook handler for Express
 export const handleStripeWebhook = async (req: any, res: any) => {
   const sig = req.headers["stripe-signature"];
-  let event;
-
+  
   try {
-    const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: "2023-10-16" as any,
-    });
-
+    const stripe = getStripe();
     const webhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
-    event = stripe.webhooks.constructEvent(
+    
+    const event = stripe.webhooks.constructEvent(
       req.body,
       sig,
       webhookSecret
     );
-  } catch (err: any) {
-    console.error("Webhook Error:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
 
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object as Stripe.Checkout.Session;
-    const userId = session.metadata?.userId;
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const userId = session.metadata?.userId;
 
-    if (userId) {
-      const supabaseUrl = (process.env.VITE_SUPABASE_URL || "").trim();
-      const supabaseServiceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-      const { error } = await supabaseAdmin
-        .from("profiles")
-        .update({ 
-          subscription_status: "active",
-          stripe_customer_id: session.customer as string,
-          stripe_subscription_id: session.subscription as string
-        })
-        .eq("id", userId);
-      
-      if (error) {
-        console.error("Error updating profile:", error);
+      if (userId) {
+        const supabaseAdmin = getSupabaseAdmin();
+        await supabaseAdmin
+          .from("profiles")
+          .update({ 
+            subscription_status: "active",
+            stripe_customer_id: session.customer as string,
+            stripe_subscription_id: session.subscription as string
+          })
+          .eq("id", userId);
       }
     }
-  }
 
-  res.json({ received: true });
+    res.json({ received: true });
+  } catch (err: any) {
+    console.error("Webhook Error:", err.message);
+    res.status(400).json({ error: err.message });
+  }
 };

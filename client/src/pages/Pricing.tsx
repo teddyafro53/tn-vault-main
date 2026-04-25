@@ -15,8 +15,8 @@ export default function Pricing() {
   const createCheckoutSession = trpc.stripe.createCheckoutSession.useMutation({
     onSuccess: (data: any) => {
       if (data.error) {
-        toast.error(`Konfigurationsfehler: ${data.message}`);
-        console.error("Stripe Config Error:", data.details);
+        toast.error(`Fehler: ${data.message}`);
+        console.error("Stripe Error Details:", data.details);
         setLoadingPlan(null);
         return;
       }
@@ -25,7 +25,9 @@ export default function Pricing() {
       }
     },
     onError: (error) => {
-      toast.error("Server-Fehler: " + error.message);
+      // Dies fängt Netzwerkfehler oder echte Server-Abstürze ab
+      toast.error("Verbindungsfehler zum Server. Bitte später erneut versuchen.");
+      console.error("TRPC Error:", error);
       setLoadingPlan(null);
     }
   });
